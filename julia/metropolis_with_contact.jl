@@ -512,7 +512,7 @@ function metropolis(num_part::Int, num_steps::Int, num_bins::Int, delta::Float64
     hist_1d = zeros(Float64, num_bins)
     hist_2d = zeros(Float64, num_bins, num_bins)
     dx = L / num_bins
-    step_block = num_steps ÷ 10^5
+    step_block = num_steps ÷ num_steps
     E_tot = 0.0
     E_sq = 0.0
     E_local_values = Vector{Float64}(undef, (num_steps÷step_block))
@@ -556,50 +556,50 @@ function metropolis(num_part::Int, num_steps::Int, num_bins::Int, delta::Float64
             acceptance_ratio += 1
         end
     
-    #     for x in x_coord
-    #         bin_idx = min(num_bins, max(1, Int(floor((x + L/2) / L * num_bins)) + 1))
-    #         hist_1d[bin_idx] += 1
-    #     end
+        for x in x_coord
+            bin_idx = min(num_bins, max(1, Int(floor((x + L/2) / L * num_bins)) + 1))
+            hist_1d[bin_idx] += 1
+        end
     
-    #     for i in 1:num_part
-    #         for j in (i + 1):num_part
-    #             bin_x = min(num_bins, max(1, Int(floor((x_coord[i] + L/2) / L * num_bins)) + 1))
-    #             bin_y = min(num_bins, max(1, Int(floor((x_coord[j] + L/2) / L * num_bins)) + 1))
+        for i in 1:num_part
+            for j in (i + 1):num_part
+                bin_x = min(num_bins, max(1, Int(floor((x_coord[i] + L/2) / L * num_bins)) + 1))
+                bin_y = min(num_bins, max(1, Int(floor((x_coord[j] + L/2) / L * num_bins)) + 1))
 
-    #             hist_2d[bin_x, bin_y] += 1
-    #         end
-    #     end
+                hist_2d[bin_x, bin_y] += 1
+            end
+        end
     
         if i % step_block == 0
 
-    #         E_local, E_kinetic, E_potential = local_energy_log(x_coord, num_part, psi_interp, V0, k_lat, L, k_L, k_contact, α, long_range, fermi_stats, reatto_chester, contact)
-    #         # E_local, E_kinetic, E_potential = local_energy(x_coord, num_part, psi_interp, V0, k_lat, L, k_L, k_contact, fermi_stats, reatto_chester, contact)
-    #         E_tot += E_local
-    #         E_sq += E_local^2
-    #         n_uncorr += 1
+            E_local, E_kinetic, E_potential = local_energy_log(x_coord, num_part, psi_interp, V0, k_lat, L, k_L, k_contact, α, long_range, fermi_stats, reatto_chester, contact)
+            # E_local, E_kinetic, E_potential = local_energy(x_coord, num_part, psi_interp, V0, k_lat, L, k_L, k_contact, fermi_stats, reatto_chester, contact)
+            E_tot += E_local
+            E_sq += E_local^2
+            n_uncorr += 1
 
-    #         if isnan(E_local)
-    #             @warn "NaN detected at step $i: E_local = $E_local"
-    #             continue  # Skip this iteration to avoid polluting data
-    #         end
+            if isnan(E_local)
+                @warn "NaN detected at step $i: E_local = $E_local"
+                continue  # Skip this iteration to avoid polluting data
+            end
 
-    #         for a in 1:num_part, b in 1:num_part
-    #             SSF .+= exp.(im * (x_coord[a] - x_coord[b]) .* k)
-    #         end
+            for a in 1:num_part, b in 1:num_part
+                SSF .+= exp.(im * (x_coord[a] - x_coord[b]) .* k)
+            end
     
-    #         iter_val[idx_plot] = i
-    #         E_local_values[idx_plot] = E_local / num_part
+            iter_val[idx_plot] = i
+            E_local_values[idx_plot] = E_local / num_part
             configurations[idx_plot] = copy(x_coord)
             idx_plot += 1
         end
     end
 
-    # hist_1d ./= (sum(hist_1d) * dx)
-    # hist_2d ./= (sum(hist_2d) * dx^2)
-    # SSF ./= n_uncorr
+    hist_1d ./= (sum(hist_1d) * dx)
+    hist_2d ./= (sum(hist_2d) * dx^2)
+    SSF ./= n_uncorr
 
-    # plot!(plt, iter_val, E_local_values, label=L"E", color=:blue)
-    # display(plt)
+    plot!(plt, iter_val, E_local_values, label=L"E", color=:blue)
+    display(plt)
 
     return E_tot / n_uncorr, E_sq / n_uncorr, SSF, hist_1d, hist_2d, acceptance_ratio / num_steps, E_local_values, configurations
 end
