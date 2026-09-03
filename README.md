@@ -64,8 +64,7 @@ script). **These paths are relative to the current working directory at the time
 the script, not to the script's own location.** Run drivers from the directory where you
 want `numpy_arrays_VMC_.../`, `numpy_arrays_DMC/`, etc. to appear (e.g. `cd julia/vmc &&
 julia --project=../ run_vmc.jl`), or update the `base_dir`/`psi_path`/`E_path` strings to
-absolute paths if you run from elsewhere (e.g. from a SLURM submission script on
-Correfoc).
+absolute paths if you run from elsewhere.
 
 ## Environment setup
 
