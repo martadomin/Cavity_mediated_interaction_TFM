@@ -90,13 +90,6 @@ julia --project=julia julia/vmc/run_vmc.jl
 pip install -r python/requirements.txt
 ```
 
-## Known caveats (flagged, not silently fixed)
-
-- `local_energy` (in `vmc_core.jl`, reused by `dmc_core.jl`) reads the Fermi-statistics
-  exponent `α` and the `long_range` flag from the enclosing script's scope rather than
-  taking them as explicit arguments. Make sure these are set as intended in the driver
-  script before each run.
-
 ## Citation
 
 If you use this code, please cite:
