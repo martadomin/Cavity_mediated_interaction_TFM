@@ -1,0 +1,22 @@
+# Simulation output (large, regenerable, machine-specific)
+data/
+numpy_arrays_VMC*/
+numpy_arrays_DMC*/
+imag_DMC/
+
+# Julia
+julia/Manifest.toml
+*.jl.cov
+*.jl.*.cov
+*.jl.mem
+
+# Python
+__pycache__/
+*.pyc
+.ipynb_checkpoints/
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.vscode/
+*.swp
