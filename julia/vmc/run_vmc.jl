@@ -2,6 +2,8 @@ using NPZ, DelimitedFiles, Printf, ProgressMeter, Base.Threads, Plots, LinearAlg
 
 include(joinpath(@__DIR__, "..", "src", "VMCCore.jl"))
 
+# 0 --> Density is kept constant
+# 1 --> Length/Size of the system is kept constant
 system_prop = 0
 
 long_range      = true        
