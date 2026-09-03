@@ -2,7 +2,7 @@
 
 Code accompanying the manuscript *"Quantum Monte Carlo study of systems interacting via
 long-range interactions mediated by a cavity"* (arXiv:[2601.10301](https://arxiv.org/abs/2601.10301),
-submitted to Physical Review A).
+published in Physical Review A DOI: [10.1103/6jcl-c1gt](https://doi.org/10.1103/6jcl-c1gt)).
 
 The code studies 1D quantum gases — an ideal Bose gas, bosons with combined short- and
 long-range interactions, and an ideal Fermi gas — subject to cavity-mediated,
