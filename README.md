@@ -5,10 +5,10 @@ long-range interactions mediated by a cavity"* (arXiv:[2601.10301](https://arxiv
 published in Physical Review A DOI: [10.1103/6jcl-c1gt](https://doi.org/10.1103/6jcl-c1gt)).
 
 The code studies 1D quantum gases: an ideal Bose gas, bosons with combined short- and
-long-range interactions, and an ideal Fermi gas, subject to cavity-mediated,
-infinite-range interactions in a periodic box. The methods use are: Variational and Diffusion Monte
-Carlo (VMC/DMC). It computes ground-state energies, density profiles, pair correlations
-g⁽²⁾, and the superfluid fraction via the Leggett bound.
+long-range interactions, and an ideal Fermi gas; each of them subject to cavity-mediated,
+infinite-range interactions in a periodic box. The methods used are: Variational and Diffusion Monte
+Carlo (VMC/DMC). It computes ground-state energies, density profiles $n(x)$, pair correlations
+$g^{(2)}$, and the superfluid fraction via the Leggett bound.
 
 ## Repository structure
 
@@ -30,21 +30,16 @@ g⁽²⁾, and the superfluid fraction via the Leggett bound.
 ├── python/
 │   ├── imaginary_time_evolution.py   # generates the two-body cavity-mediated wavefunction
 │   └── requirements.txt
-└── (data output directories, e.g. numpy_arrays_VMC_130726/, are created at
+└── (data output directories, e.g. numpy_arrays_VMC/, are created at
     runtime next to wherever a driver script is *run from* — see "Data paths"
     below; they are gitignored, not part of this tree)
 ```
 
-`julia/src/` is the single source of truth for the trial wavefunction, particle moves,
-and energy estimators; both `run_vmc.jl` and `dmc/dmc_core.jl` include it (via
-`VMCCore.jl`) rather than each keeping their own copy, so a fix made once (e.g. to the
-wavefunction or the kinetic-energy evaluation) is automatically picked up everywhere.
-The five files under `src/` split along physical function, not just line count:
-geometry/root-finding, wavefunction evaluation, MC move proposals, energy estimators,
-and the sampler loop that ties them together — each can be read, tested, or modified on
-its own. `VMCCore.jl` just includes them in dependency order; nothing else changed
-functionally when the split happened (I diffed every resulting file against the
-original to confirm).
+`julia/src/` contains all the shared code (trial wavefunction, particle moves, energy
+calculation) that both VMC and DMC use. Instead of each having its own copy for the
+basic functions which are calculated in the same way (energy, and such), they both
+include the same files from `src/`, so when you fix a bug or improve something, it
+automatically works everywhere.
 
 ## Workflow
 
@@ -62,7 +57,7 @@ Output arrays are organized by interaction type, particle number `N`, coupling `
 box length `L` (see the `base_dir`/`filename` construction near the top of each driver
 script). **These paths are relative to the current working directory at the time you run
 the script, not to the script's own location.** Run drivers from the directory where you
-want `numpy_arrays_VMC_.../`, `numpy_arrays_DMC/`, etc. to appear (e.g. `cd julia/vmc &&
+want `numpy_arrays_VMC/`, `numpy_arrays_DMC/`, etc. to appear (e.g. `cd julia/vmc &&
 julia --project=../ run_vmc.jl`), or update the `base_dir`/`psi_path`/`E_path` strings to
 absolute paths if you run from elsewhere.
 
