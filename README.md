@@ -96,4 +96,4 @@ https://doi.org/10.1103/6jcl-c1gt
 ## Authors
 
 Marta Domínguez-Navarro (corresponding author, UPC), Grigori Astrakharchik
-(UPC), Abel Rojo-Francàs (OIST), Bruno Juliá-Díaz (UB)
+(UPC), Abel Rojo-Francàs (OIST), Bruno Juliá-Díaz (ICCUB & UB)
