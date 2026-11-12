@@ -23,6 +23,31 @@ function interpolated_wave_function(psi::Matrix{Float64}, x::Vector{Float64})::S
 end
 
 """
+    periodic_wave_function(psi::Matrix{Float64}; L_cell=1.0, n_images=1) -> Spline2D
+
+Spline of the two-body wavefunction that is smooth *and periodic* on the unit cell.
+
+`psi` is the Ng×Ng grid on [-L_cell/2, L_cell/2) (periodic, endpoint excluded), as saved by
+python/imaginary_time_evolution.py. Dierckx has no periodic 2D splines: splining only the
+closed cell matches ψ at x = ±L_cell/2 but not its derivatives, which leaves a kink at every
+cell boundary. ∇²Ψ then has a delta function that the local energy E_L never sees, biasing
+both VMC and DMC energies (for N = 2, V0 = −5: ⟨E_L⟩ = −0.15717 vs the true variational
+energy −0.15803). Here the grid is tiled periodically (2·n_images + 1)² times and splined
+over the whole tiling; the spline is only evaluated in the central cell (map_to_unit_cell),
+where the influence of the outer ends has decayed and the spline is periodic to ~1e-10.
+"""
+function periodic_wave_function(psi::Matrix{Float64}; L_cell::Float64 = 1.0, n_images::Int = 1)::Spline2D
+    Ng = size(psi, 1)
+    reps = 2 * n_images + 1
+    tiled = repeat(psi, reps, reps)
+    tiled = vcat(tiled, tiled[1:1, :])               # close the tiling (last point = first)
+    tiled = hcat(tiled, tiled[:, 1:1])
+    x = collect(range(-L_cell / 2 - n_images * L_cell, stop = L_cell / 2 + n_images * L_cell,
+                      length = reps * Ng + 1))
+    return Spline2D(x, x, tiled; kx=4, ky=4, s=0)
+end
+
+"""
     trial_wave_function(x_coord, num_part, psi_interp, L, k_L, k_contact, α, long_range, fermi_stats, reatto_chester, contact) -> Float64
 
 Evaluates the total trial wave function for a set of particle positions, possibly including 

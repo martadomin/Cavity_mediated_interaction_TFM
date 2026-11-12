@@ -20,3 +20,13 @@ __pycache__/
 Thumbs.db
 .vscode/
 *.swp
+
+# Run logs
+*.log
+*.err
+
+# Diagnostic figures
+imag_MF/
+imag_OBDM/
+imag_VMC/
+

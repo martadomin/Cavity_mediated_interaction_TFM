@@ -7,36 +7,30 @@ include(joinpath(@__DIR__, "..", "src", "VMCCore.jl"))
 system_prop = 0
 
 long_range      = true        
-fermi_stat      = true    
+fermi_stat      = false    
 reatto_chester  = false
 contact         = false       
-density_val     = 2.0
+density_val     = 1.0
 L_val           = 2.0
 
-V0_scan_ranges = Dict(
-    4 => [-3., -2., -1., 0, 1., 2., 3.],
-)
+N_list      = [10, 15, 20, 25, 30, 35, 40, 45, 50]
+V0_kac_list = collect(0.0:-10.0:-250.0)
 
 combos = Tuple{Int, Float64}[]
-for (N, V0_list) in V0_scan_ranges
-    for V0 in V0_list
-        push!(combos, (N, V0))
-    end
+for N in N_list, V0_kac in V0_kac_list
+    push!(combos, (N, V0_kac / N))        # bare V0 passed to metropolis
 end
-
 println("Total (N, V0) combinations to simulate: $(length(combos))")
-for (N, V0_list) in sort(collect(V0_scan_ranges), by = first)
-    println("$N: ", V0_list, ",")
-end
 
-num_steps = 10^6
+n_sweeps = 10^5
 k_lat = 2π
 α = 1.0
 k_L = 0.0
 
 @threads for (num_part, V0) in combos
 
-    num_bins = 100
+    num_bins  = 100
+    num_steps = n_sweeps * num_part
 
     filename = system_prop == 0 ? "constant_density" : "constant_length"
     filename *= !long_range ? "_no-interaction" : ""
@@ -53,7 +47,7 @@ k_L = 0.0
     end
 
     for subdir in ["hist_1D", "hist_2D", "energy", "energy_sq", "SSF",
-                   "energy_array", "energy_kin", "energy_pot"]
+                   "energy_array", "energy_kin", "energy_pot", "obdm", "theta"]
         dir_path = joinpath(base_dir, subdir, @sprintf "V0=%.3f" V0)
         if !isdir(dir_path)
             mkpath(dir_path)
@@ -91,14 +85,8 @@ k_L = 0.0
                 error("Wavefunction file not found: $psi_path. Please generate wavefunction data first.")
             end
             psi = npzread(psi_path)
-            N_grid = size(psi)[1]
-            x = collect(range(-L_unit_cell/2, stop=L_unit_cell/2, length=N_grid + 1))
-            psi_full = zeros(N_grid + 1, N_grid + 1)
-            psi_full[1:N_grid, 1:N_grid] .= psi
-            psi_full[N_grid+1, 1:N_grid] .= psi[1, :]
-            psi_full[1:N_grid, N_grid+1] .= psi[:, 1]
-            psi_full[N_grid+1, N_grid+1]  = psi[1, 1]
-            local_interp = interpolated_wave_function(psi_full, x)
+            # periodic in value *and* derivatives across the cell boundary (see periodic_wave_function)
+            local_interp = periodic_wave_function(psi; L_cell=L_unit_cell)
         end
 
         k_contact = 0.0
@@ -115,18 +103,24 @@ k_L = 0.0
         energy_array_path = @sprintf "%s/energy_array/V0=%.3f/energy_array_%d_%.3f_%.1f.npy" base_dir V0 num_part V0 L
         energy_kin_path   = @sprintf "%s/energy_kin/V0=%.3f/energy_kin_%d_%.3f_%.1f.npy"     base_dir V0 num_part V0 L
         energy_pot_path   = @sprintf "%s/energy_pot/V0=%.3f/energy_pot_%d_%.3f_%.1f.npy"     base_dir V0 num_part V0 L
+        obdm_path         = @sprintf "%s/obdm/V0=%.3f/obdm_%d_%.3f_%.1f.npy"                 base_dir V0 num_part V0 L
+        theta_path        = @sprintf "%s/theta/V0=%.3f/theta_%d_%.3f_%.1f.npy"               base_dir V0 num_part V0 L
 
-        E, E_sq, SSF, hist_1d, hist_2d, acceptance_ratio, E_array, E_kin, E_pot = metropolis(
+        E, E_sq, SSF, hist_1d, hist_2d, acceptance_ratio, E_array, E_kin, E_pot, obdm, Θ_values = metropolis(
             num_part, num_steps, num_bins, delta, L, V0, k_lat,
             local_interp, k_L, k_contact, α,
-            long_range, fermi_stat, reatto_chester, contact
+            long_range, fermi_stat, reatto_chester, contact;
+            global_move_prob = 0.2, step_block = num_part, compute_zoom = false,
+            compute_energy = false, compute_ssf = true, compute_g2 = false, compute_obdm = false
         )
 
-        npzwrite(hist1D_path,       hist_1d)
-        npzwrite(hist2D_path,       hist_2d)
+        # npzwrite(hist1D_path,       hist_1d)
+        # # npzwrite(hist2D_path,       hist_2d)
+        # npzwrite(obdm_path,         obdm)
+        # npzwrite(theta_path,        Θ_values)
         # npzwrite(energy_path,       E)
         # npzwrite(energy_sq_path,    E_sq)
-        # npzwri(ssf_pateth,          SSF)
+        npzwrite(ssf_path,          SSF)
         # npzwrite(energy_array_path, E_array)
         # npzwrite(energy_kin_path,   E_kin)
         # npzwrite(energy_pot_path,   E_pot)

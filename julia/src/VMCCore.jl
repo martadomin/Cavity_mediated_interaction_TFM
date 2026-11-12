@@ -5,12 +5,14 @@
 # Include order follows the physical dependency chain:
 #   utils          -> periodic geometry, contact-interaction root finding
 #   wavefunctions   -> trial Ψ and its log, built from utils
+#   fast_spline     -> allocation-free drop-in evaluation of the Spline2D (used by DMC threads)
 #   moves           -> particle-move proposals, built from utils
 #   energy          -> local energy estimators, built from wavefunctions
 #   sampler         -> the VMC Metropolis loop, built from all of the above
 
 include(joinpath(@__DIR__, "utils.jl"))
 include(joinpath(@__DIR__, "wavefunctions.jl"))
+include(joinpath(@__DIR__, "fast_spline.jl"))
 include(joinpath(@__DIR__, "moves.jl"))
 include(joinpath(@__DIR__, "energy.jl"))
 include(joinpath(@__DIR__, "sampler.jl"))

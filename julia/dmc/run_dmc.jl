@@ -1,166 +1,169 @@
-using Printf, ProgressMeter, NPZ, DelimitedFiles
-using Plots, LinearAlgebra, Random
+# DMC production run for bosons with the Kac-scaled cavity interaction.
+#
+# Standard workflow: Δτ and the number of walkers are fixed once, from the convergence
+# study at the hardest point (convergence_dmc.jl), and used for every production point.
+#
+# For every (N, V0_kac) point:
+#   1. VMC reference with the same Ψ_T and grids (energy, n(x), S(k), ρ₁).
+#   2. Quadratic (second-order) DMC at the chosen Δτ (mixed estimators).
+#   3. Extrapolated estimators 2·O_DMC − O_VMC for n(x), S(k), ρ₁.
+#
+# Usage (from the repository root):
+#   julia -t auto julia/dmc/run_dmc.jl           # all points, one after the other
+#   julia -t auto julia/dmc/run_dmc.jl 7         # only point 7 (0-based)
+#   julia julia/dmc/run_dmc.jl --list            # print the list of points and exit
+#   julia -t auto julia/dmc/run_dmc.jl --V0kac -150 --walkers 600 --tau 8 --vmc-sweeps 200000 [--dtau 5e-4]
+#                                                # higher-statistics rerun of some couplings
+#                                                # (new files: walkers/steps are in the names)
+#   julia -t auto julia/dmc/run_dmc.jl --V0kac -25 --N 40 --walkers 1200 --tau 8 --branch
+#                                                # single-branch Ψ_T from python/branch_trial.py: no Z₂ moves,
+#                                                # output in numpy_arrays_DMC_branch/
+#
+# Inputs needed: numpy_arrays_VMC/wavefunction/V0=.../wavefunction_*.npy
+
+ENV["GKSwstype"] = "100"     # headless plotting backend (Plots is loaded by the core files)
+
+using Printf, NPZ, Statistics
 using Base.Threads
 
 include(joinpath(@__DIR__, "dmc_core.jl"))
 
-print(Threads.nthreads(), " threads available.\n")
+# -----------------------------------------------
+# Points and parameters
+# -----------------------------------------------
+N_list        = [15, 20, 25, 30, 35, 40]
+V0_kac_list   = [-10.0, -15.0, -20.0, -25.0, -30.0, -35.0, -40.0, -50.0, -60.0, -80.0, -100.0, -150.0, -200.0]
+density_val   = 1.0                     # L = N / density
+Δτ            = 1e-3                    # convergence_dmc.jl, N=40, V0_kac=-100: bias < 0.1 (stat. error 0.45)
+τ_total       = 3.0                     # imaginary time per DMC run
+num_walkers   = 200                     # target population, from convergence_dmc.jl
+burn_in_frac  = 0.2                     # equilibration
+num_bins      = 100
+obdm_every    = 10
+z2_shift_prob = 0.1
+quadratic     = true                    # second-order propagator
+n_vmc_sweeps  = 10^5                    # VMC reference: sweeps (× N single-particle steps)
+k_lat         = 2π
+α             = 1.0
+k_L           = 0.0
 
-# -----------------------------------------------
-# System Configuration
-# -----------------------------------------------
-# 0 --> Density is kept constant
-# 1 --> Length/Size of the system is kept constant
-system_prop = 0
-
-# For constant density: specify density_val
-# For constant length: specify L_val
-density_val = 1.0
-L_val = 5.0
-
-# -----------------------------------------------
-# Global Simulation Parameters
-# -----------------------------------------------
-num_particles_array = [2]
-Δτ = 1e-4
-num_steps = 10^5
-num_walkers = 1000
-α = 1.0
-num_bins = 100
-
-# -----------------------------------------------
-# Simulation Flags
-# -----------------------------------------------
-fermi_stats = false
-contact     = false
-long_range  = true
+fermi_stats, reatto_chester, contact, long_range = false, false, false, true
 importance_sampling = true
-previous_walkers    = false
 
-# -----------------------------------------------
-# Outer Loop: Iterate over interaction strengths
-# -----------------------------------------------
-for V0 in collect(-10.0:20.0:10.0)
-    println("Running simulations for V0 = $V0...\n")
-
-    # Inner loop over particle numbers
-    for num_particles in num_particles_array
-        L = system_prop == 0 ? num_particles / density_val : L_val
-        
-        if system_prop == 0
-            # Constant density case
-            E_path = @sprintf("numpy_arrays_VMC/constant_density_%.1f/energy/V0=%.1f/energy_%d_%.1f_%.1f.npy", V0, num_particles, V0, L)
-            folder_tag = "constant_density"
-        elseif system_prop == 1
-            # Constant length case
-            E_path = @sprintf("numpy_arrays_VMC/constant_length_%.1f/energy/V0=%.1f/energy_%d_%.1f_%.1f.npy", L_val, V0, num_particles, V0, L)
-            folder_tag = "constant_length_$(L_val)"
-        end
-
-        if !isfile(E_path)
-            E_T = -abs(V0)^2 * num_particles^2 / 2.0
+# --- command-line overrides: --V0kac a b c, --N a b, --walkers n, --tau t, --vmc-sweeps n ---
+opts = Dict{String, Vector{String}}("points" => String[])   # bare integers before any flag = point indices
+let key = "points"
+    for a in ARGS
+        if startswith(a, "--")
+            key = a[3:end]; opts[key] = String[]
         else
-            E_T = NPZ.npzread(E_path)
+            push!(opts[key], a)
         end
-        println("Trial energy: ", E_T)
-
-        # --- Define suffix for filenames ---
-        IS_tag = importance_sampling ? "_IS" : ""
-
-        # --- Base output directories ---
-        base_folder_data = "numpy_arrays_DMC/energy_study_def"
-        base_folder_imag = @sprintf "imag_DMC/energy_study_def/V0=%.1f" V0
-
-        if !isdir(base_folder_data); mkpath(base_folder_data); end
-        if !isdir(base_folder_imag); mkpath(base_folder_imag); end
-
-        # --- Construct common filename stem ---
-        filename_core = @sprintf("%d_%.4f_%d_%d%s", num_walkers, Δτ, num_particles, num_steps, IS_tag)
-
-        # --- Output file paths ---
-        energies_path   = base_folder_data * "/energies/V0=$(V0)/energies_" * filename_core * ".npy"
-        energy_path     = base_folder_data * "/energy/V0=$(V0)/energy_"     * filename_core * ".npy"
-        hist1d_path     = base_folder_data * "/hist_1d/V0=$(V0)/hist1d_"     * filename_core * ".npy"
-        hist2d_path     = base_folder_data * "/hist_2d/V0=$(V0)/hist2d_"     * filename_core * ".npy"
-        ssf_path        = base_folder_data * "/SSF/V0=$(V0)/SSF_"           * filename_core * ".npy"
-        walker_path     = base_folder_data * "/walkers/V0=$(V0)/walkers_2_" * filename_core * ".npy"
-
-        histplot_path   = base_folder_imag * "/histogram_fs_"  * filename_core * ".png"
-        energyplot_path = base_folder_imag * "/energy_"        * filename_core * ".png"
-        ssfplot_path    = base_folder_imag * "/SSF_"           * filename_core * ".png"
-        hist2dplot_path = base_folder_imag * "/hist2d_"        * filename_core * ".png"
-
-        for path in [energies_path, energy_path, hist1d_path, hist2d_path, ssf_path, walker_path,
-                     histplot_path, energyplot_path, ssfplot_path, hist2dplot_path]
-            dir_path = dirname(path)
-            if !isdir(dir_path); mkpath(dir_path); end
-        end
-
-        println("Data will be saved to: $energies_path")
-        println("Images will be saved to: $histplot_path")
-
-        # -----------------------------------------------
-        # Prepare trial wavefunction and contact strength
-        # -----------------------------------------------
-        k_contact = 0.0
-        if contact
-            k_contact = find_k_contact(L, -1.0)
-        end
-
-        ψ_2 = 0.0
-        if long_range
-            L_unit = 1.0
-            psi_path = @sprintf "numpy_arrays_VMC/wavefunction/V0=%.1f/wavefunction_%.1f_%.1f.npy" V0 V0 L_unit
-            if !isfile(psi_path)
-                error("Wavefunction file not found at path: $psi_path. Please generate the wavefunction data first.")
-            end
-            psi = NPZ.npzread(psi_path)
-            x = collect(range(-L_unit/2, stop=L_unit/2, length=size(psi)[1] + 1))[1:end-1]
-            ψ_2 = interpolated_wave_function(psi, x)
-        end
-
-        # -----------------------------------------------
-        # Run DMC simulation
-        # -----------------------------------------------
-        println("Running DMC for $(num_particles) particles with Δτ = $(Δτ) and $(num_walkers) walkers... ")
-        energies, energy, hist_1d, hist_2d, SSF, final_walkers = DMC_part_w_inter(
-            num_particles, num_steps, num_walkers, num_bins, Δτ, E_T, α,
-            V0, L, ψ_2, k_contact, long_range, fermi_stats, contact,
-            importance_sampling, previous_walkers
-        )
-        println("Final energy for $num_walkers walkers with Δτ = $(Δτ): $(energy)")
-
-        # -----------------------------------------------
-        # Save output data arrays
-        # -----------------------------------------------
-        NPZ.npzwrite(energies_path, energies)
-        NPZ.npzwrite(energy_path, energy)
-        NPZ.npzwrite(hist1d_path, hist_1d)
-        NPZ.npzwrite(hist2d_path, hist_2d)
-        NPZ.npzwrite(ssf_path, SSF)
-        NPZ.npzwrite(walker_path, final_walkers)
-
-        # -----------------------------------------------
-        # Save plots for observables
-        # -----------------------------------------------
-        bins_plot = range(-L/2, stop=L/2, length=num_bins + 1)
-        bin_center = 0.5 .* (bins_plot[1:end-1] .+ bins_plot[2:end])
-
-        plt_hist = plot(bin_center, hist_1d, label="DMC", lw=2)
-        xlabel!("x"); ylabel!("Density")
-        title!("Ground State Density of Particle in a Box (N = $num_particles)")
-        savefig(plt_hist, histplot_path)
-
-        plt_energy = plot(energies, label="Estimated E₀", xlabel="Time step", ylabel="Energy", legend=:bottomright)
-        savefig(plt_energy, energyplot_path)
-
-        k_vals_plot = (2π / L) * collect(1:5*L)
-        plt_SSF = plot(k_vals_plot, real(SSF), label="Real part of SSF", xlabel="k", ylabel="SSF", legend=:bottomright, seriestype=:line, marker=:circle)
-        savefig(plt_SSF, ssfplot_path)
-
-        plt_2d = heatmap(bin_center, bin_center, hist_2d, xlabel="x", ylabel="y", title="2D Histogram")
-        savefig(plt_2d, hist2dplot_path)
-
-        print(energyplot_path, " saved successfully.\n")
     end
 end
+haskey(opts, "V0kac")      && (V0_kac_list  = parse.(Float64, opts["V0kac"]))
+haskey(opts, "N")          && (N_list       = parse.(Int, opts["N"]))
+haskey(opts, "walkers")    && (num_walkers  = parse(Int, opts["walkers"][1]))
+haskey(opts, "tau")        && (τ_total      = parse(Float64, opts["tau"][1]))
+haskey(opts, "vmc-sweeps") && (n_vmc_sweeps = parse(Int, opts["vmc-sweeps"][1]))
+haskey(opts, "dtau")       && (Δτ           = parse(Float64, opts["dtau"][1]))
+branch_trial = haskey(opts, "branch")       # Ψ_T not invariant under the shift: no Z₂ moves in DMC or VMC
+branch_trial && (z2_shift_prob = 0.0)
+cat_trial = haskey(opts, "cat")             # Z₂-symmetric Ψ_T from python/cat_trial.py: same moves as the default trial
+vmc_global_prob = branch_trial ? 0.0 : 0.2
+point_args = opts["points"]
+
+points = [(N, Vk) for Vk in V0_kac_list for N in N_list]
+
+if "--list" in ARGS
+    for (i, (N, Vk)) in enumerate(points)
+        @printf("%3d  N=%2d  V0_kac=%7.1f  V0=%8.3f\n", i - 1, N, Vk, Vk / N)
+    end
+    println("$(length(points)) points")
+    exit()
+end
+
+selected = isempty(point_args) ? points : [points[parse(Int, a) + 1] for a in point_args]
+println("$(nthreads()) threads, running $(length(selected)) of $(length(points)) points, Δτ = $Δτ, " *
+        "$num_walkers walkers, τ = $τ_total, VMC sweeps = $n_vmc_sweeps")
+
+for (num_particles, V0_kac) in selected
+    V0 = V0_kac / num_particles
+    L = num_particles / density_val
+    println("\n==================== N = $num_particles, V0_kac = $V0_kac (V0 = $V0), L = $L ====================")
+
+    base = @sprintf "numpy_arrays_DMC%s/constant_density_%.1f" (branch_trial ? "_branch" : cat_trial ? "_cat" : "") density_val
+    V0_dir = @sprintf "V0=%.3f" V0
+    out(sub, name) = (p = joinpath(base, sub, V0_dir, name * ".npy"); mkpath(dirname(p)); p)
+    tag_vmc = @sprintf("%d_%.3f_%.1f", num_particles, V0, L)
+    num_steps = round(Int, τ_total / Δτ)
+    core = @sprintf("%d_%.4f_%d_%d_%.3f_%.1f%s", num_walkers, Δτ, num_particles, num_steps, V0, L,
+                    importance_sampling ? "_IS" : "")
+    if isfile(joinpath(base, "obdm", V0_dir, "obdm_extrap_" * core * ".npy"))
+        println("Already done (obdm_extrap_$core.npy exists), skipping")
+        continue
+    end
+
+    # --- Trial wavefunction: periodic spline, identical to run_vmc.jl ---
+    psi_path = branch_trial ?
+        (@sprintf "numpy_arrays_VMC/wavefunction_branch/V0=%.3f/wavefunction_%.3f_%d.npy" V0 V0 num_particles) :
+        cat_trial ?
+        (@sprintf "numpy_arrays_VMC/wavefunction_cat/V0=%.3f/wavefunction_%.3f_%d.npy" V0 V0 num_particles) :
+        (@sprintf "numpy_arrays_VMC/wavefunction/V0=%.3f/wavefunction_%.3f_%.1f.npy" V0 V0 1.0)
+    isfile(psi_path) || error("Wavefunction file not found: $psi_path")
+    ψ_2 = periodic_wave_function(NPZ.npzread(psi_path))
+    k_contact = contact ? find_k_contact(L, -1.0) : 0.0
+
+    # -----------------------------------------------
+    # 1. VMC reference (same Ψ_T and grids as the DMC estimators)
+    # -----------------------------------------------
+    t_vmc = @elapsed begin
+        E_vmc, _, SSF_vmc, hist_1d_vmc, _, _, E_arr_vmc, _, _, obdm_vmc, _, ncell_vmc = metropolis(
+            num_particles, n_vmc_sweeps * num_particles, num_bins, 1.0, L, V0, k_lat,
+            FastSpline2D(ψ_2), k_L, k_contact, α, long_range, fermi_stats, reatto_chester, contact;
+            global_move_prob = vmc_global_prob, step_block = num_particles, compute_zoom = false,
+            compute_energy = true, compute_ssf = true, compute_g2 = false, compute_obdm = true)
+    end
+    E_vmc_err = blocking_error(E_arr_vmc) * num_particles
+    @printf("VMC: E = %.4f ± %.4f  (%.0f s)\n", E_vmc, E_vmc_err, t_vmc)
+    NPZ.npzwrite(out("energy",  "energy_vmc_" * tag_vmc), [E_vmc, E_vmc_err])
+    NPZ.npzwrite(out("hist_1d", "hist1d_vmc_" * tag_vmc), hist_1d_vmc)
+    NPZ.npzwrite(out("SSF",     "SSF_vmc_"    * tag_vmc), SSF_vmc)
+    NPZ.npzwrite(out("obdm",    "obdm_vmc_"   * tag_vmc), obdm_vmc)
+    NPZ.npzwrite(out("n_cell",  "ncell_vmc_"  * tag_vmc), ncell_vmc)    # n(x mod λ)/n̄
+
+    # -----------------------------------------------
+    # 2. DMC
+    # -----------------------------------------------
+    println("\n--- DMC Δτ = $Δτ, $num_steps steps, $num_walkers walkers ---")
+    t_dmc = @elapsed begin
+        energies, energy, hist_1d, hist_2d, SSF, final_walkers, obdm, ncell = DMC_part_w_inter(
+            num_particles, num_steps, num_walkers, num_bins, Δτ, E_vmc, α,
+            V0, L, ψ_2, k_contact, long_range, fermi_stats, contact,
+            importance_sampling, false;
+            k_lat = k_lat, k_L = k_L, reatto_chester = reatto_chester,
+            burn_in_frac = burn_in_frac, compute_obdm = true, obdm_every = obdm_every,
+            z2_shift_prob = z2_shift_prob, quadratic = quadratic)
+    end
+    energy_err = blocking_error(energies[floor(Int, burn_in_frac * num_steps)+1:end])
+    @printf("DMC: E = %.4f ± %.4f,  E/N = %.5f ± %.5f   (VMC: E/N = %.5f)  (%.0f s)\n",
+            energy, energy_err, energy / num_particles, energy_err / num_particles, E_vmc / num_particles, t_dmc)
+
+    NPZ.npzwrite(out("energies", "energies_" * core), energies)
+    NPZ.npzwrite(out("energy",   "energy_"   * core), [energy, energy_err])
+    NPZ.npzwrite(out("hist_1d",  "hist1d_"   * core), hist_1d)
+    NPZ.npzwrite(out("hist_2d",  "hist2d_"   * core), hist_2d)
+    NPZ.npzwrite(out("SSF",      "SSF_"      * core), SSF)
+    NPZ.npzwrite(out("obdm",     "obdm_"     * core), obdm)
+    NPZ.npzwrite(out("walkers",  "walkers_"  * core), final_walkers)
+    NPZ.npzwrite(out("n_cell",   "ncell_"    * core), ncell)              # n(x mod λ)/n̄
+
+    # -----------------------------------------------
+    # 3. Extrapolated estimators 2·DMC − VMC
+    # -----------------------------------------------
+    NPZ.npzwrite(out("hist_1d", "hist1d_extrap_" * core), 2 .* hist_1d .- hist_1d_vmc)
+    NPZ.npzwrite(out("SSF",     "SSF_extrap_"    * core), 2 .* SSF .- SSF_vmc)
+    NPZ.npzwrite(out("obdm",    "obdm_extrap_"   * core), 2 .* obdm .- obdm_vmc)
+    println("Saved to $base/*/$V0_dir/")
+end
+println("\nAll selected points done.")
